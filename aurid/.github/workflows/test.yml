@@ -1,0 +1,361 @@
+name: Aurid CI - Test Suite
+
+# Run tests on push and pull request
+on:
+  push:
+    branches: [ main, develop, feature/* ]
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+      - 'LICENSE'
+      - 'CHANGELOG'
+  pull_request:
+    branches: [ main, develop ]
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+      - 'LICENSE'
+      - 'CHANGELOG'
+
+# Cancel previous runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Environment variables available to all jobs
+env:
+  RAILS_ENV: test
+  RACK_ENV: test
+  NODE_ENV: test
+  CI: true
+  COVERAGE: true
+  DATABASE_URL: postgres://aurid:password@localhost:5432/aurid_test
+  REDIS_URL: redis://localhost:6379/1
+  KEYCLOAK_URL: http://localhost:8080
+  FREEIPA_SERVER: localhost
+
+jobs:
+  # Ruby tests
+  ruby_tests:
+    name: Ruby Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: aurid
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: aurid_test
+        ports:
+          - 5432:5432
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+      
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+
+    strategy:
+      matrix:
+        ruby: ["3.2.2"]
+        rails: ["7.1"]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+          cache-version: 1
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client libpq-dev
+      
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'yarn'
+      
+      - name: Install Yarn
+        run: npm install -g yarn
+      
+      - name: Install Ruby dependencies
+        working-directory: aurid/apps/admin_console
+        run: |
+          bundle config set --local path 'vendor/bundle'
+          bundle config set --local without 'development production'
+          bundle install --jobs 4 --retry 3
+      
+      - name: Create database
+        working-directory: aurid/apps/admin_console
+        run: |
+          bundle exec rails db:create
+          bundle exec rails db:migrate
+      
+      - name: Run RSpec tests
+        working-directory: aurid/apps/admin_console
+        run: |
+          bundle exec rspec --format documentation --color --fail-fast
+        env:
+          DATABASE_URL: postgres://aurid:password@localhost:5432/aurid_admin_console_test
+          REDIS_URL: redis://localhost:6379/1
+          REDIS_CACHE_URL: redis://localhost:6379/1
+          REDIS_SESSION_URL: redis://localhost:6379/2
+          JWT_SECRET_KEY: test_secret_key_1234567890
+          DEVISE_SECRET_KEY: test_devise_secret_1234567890
+          DEVISE_PEPPER: test_devise_pepper_1234567890
+      
+      - name: Run RSpec with coverage
+        working-directory: aurid/apps/admin_console
+        run: |
+          bundle exec rspec --format documentation --color --fail-fast
+        env:
+          COVERAGE: true
+          DATABASE_URL: postgres://aurid:password@localhost:5432/aurid_admin_console_test
+          REDIS_URL: redis://localhost:6379/1
+          REDIS_CACHE_URL: redis://localhost:6379/1
+          REDIS_SESSION_URL: redis://localhost:6379/2
+          JWT_SECRET_KEY: test_secret_key_1234567890
+          DEVISE_SECRET_KEY: test_devise_secret_1234567890
+          DEVISE_PEPPER: test_devise_pepper_1234567890
+      
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ruby-coverage-report
+          path: aurid/apps/admin_console/coverage/
+          retention-days: 7
+
+  # Rust tests
+  rust_tests:
+    name: Rust Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+          components: rustfmt, clippy
+      
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            aurid/rust/migration_tool/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('aurid/rust/migration_tool/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      
+      - name: Install dependencies
+        working-directory: aurid/rust/migration_tool
+        run: |
+          cargo fetch
+      
+      - name: Run tests
+        working-directory: aurid/rust/migration_tool
+        run: |
+          cargo test --all-features -- --nocapture
+      
+      - name: Run clippy
+        working-directory: aurid/rust/migration_tool
+        run: |
+          cargo clippy --all-features --all-targets -- -D warnings
+      
+      - name: Run rustfmt
+        working-directory: aurid/rust/migration_tool
+        run: |
+          cargo fmt --all -- --check
+      
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rust-test-results
+          path: aurid/rust/migration_tool/target/
+          retention-days: 7
+
+  # Linting
+  linting:
+    name: Linting
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2.2"
+          bundler-cache: true
+      
+      - name: Install RuboCop
+        run: |
+          gem install rubocop rubocop-rails rubocop-rspec
+      
+      - name: Run RuboCop
+        working-directory: aurid/apps/admin_console
+        run: |
+          rubocop --format github --fail-level convention
+      
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      
+      - name: Run Rust formatting check
+        working-directory: aurid/rust/migration_tool
+        run: |
+          cargo fmt --all -- --check
+      
+      - name: Run Rust clippy
+        working-directory: aurid/rust/migration_tool
+        run: |
+          cargo clippy --all-features --all-targets -- -D warnings
+
+  # Security audit
+  security_audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2.2"
+      
+      - name: Install Brakeman
+        run: gem install brakeman
+      
+      - name: Run Brakeman
+        working-directory: aurid/apps/admin_console
+        run: |
+          brakeman -z --only-high --exit-on-warn
+      
+      - name: Install Bundler Audit
+        run: gem install bundler-audit
+      
+      - name: Run Bundler Audit
+        working-directory: aurid/apps/admin_console
+        run: |
+          bundle audit check --update
+      
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+      
+      - name: Run cargo-audit
+        working-directory: aurid/rust/migration_tool
+        run: |
+          cargo audit --deny warnings
+
+  # Build verification
+  build:
+    name: Build Verification
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2.2"
+          bundler-cache: true
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client libpq-dev
+      
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      - name: Install Ruby dependencies
+        working-directory: aurid/apps/admin_console
+        run: |
+          bundle config set --local path 'vendor/bundle'
+          bundle install --jobs 4 --retry 3
+      
+      - name: Precompile assets
+        working-directory: aurid/apps/admin_console
+        run: |
+          bundle exec rails assets:precompile
+        env:
+          RAILS_ENV: production
+          NODE_ENV: production
+      
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      
+      - name: Build Rust migration tool
+        working-directory: aurid/rust/migration_tool
+        run: |
+          cargo build --release
+      
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            aurid/apps/admin_console/public/assets/
+            aurid/rust/migration_tool/target/release/aurid-migrate
+          retention-days: 7
+
+# Test summary
+  test_summary:
+    name: Test Summary
+    needs: [ruby_tests, rust_tests, linting, security_audit, build]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+      
+      - name: Display test summary
+        run: |
+          echo "=== Aurid Test Summary ==="
+          echo ""
+          echo "✅ Ruby Tests: Passed"
+          echo "✅ Rust Tests: Passed"
+          echo "✅ Linting: Passed"
+          echo "✅ Security Audit: Passed"
+          echo "✅ Build: Passed"
+          echo ""
+          echo "All tests passed! Ready for deployment."
