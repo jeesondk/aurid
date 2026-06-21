@@ -1,0 +1,298 @@
+# Docker Compose configuration for Aurid development
+# This file sets up the complete development environment
+
+version: '3.8'
+
+services:
+  # Admin Console - Ruby on Rails application
+  admin_console:
+    build:
+      context: .
+      dockerfile: apps/admin_console/Dockerfile
+    container_name: aurid_admin_console
+    command: bash -c "rm -f tmp/pids/server.pid && bundle exec rails s -p 3000 -b '0.0.0.0'"
+    volumes:
+      - ./apps/admin_console:/app
+      - bundle_cache:/usr/local/bundle
+      - node_modules:/app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      - RAILS_ENV=development
+      - DATABASE_URL=postgresql://aurid_admin:password@postgres:5432/aurid_admin_console_development
+      - REDIS_URL=redis://redis:6379/1
+      - REDIS_CACHE_URL=redis://redis:6379/1
+      - REDIS_SESSION_URL=redis://redis:6379/2
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_REALM=aurid
+      - FREEIPA_SERVER=ipa.aurid.io
+      - CONTROL_PLANE_URL=http://control_plane:3001
+      - SIDEKIQ_WEB_ENABLED=true
+      - FLIPPER_UI_ENABLED=true
+      - DEFAULT_ADMIN_PASSWORD=admin123
+      - JWT_SECRET_KEY=development_secret_key_1234567890
+      - DEVISE_SECRET_KEY=development_devise_secret_1234567890
+      - DEVISE_PEPPER=development_devise_pepper_1234567890
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - aurid_network
+    restart: unless-stopped
+
+  # Control Plane - Ruby on Rails application
+  control_plane:
+    build:
+      context: .
+      dockerfile: apps/control_plane/Dockerfile
+    container_name: aurid_control_plane
+    command: bash -c "rm -f tmp/pids/server.pid && bundle exec rails s -p 3001 -b '0.0.0.0'"
+    volumes:
+      - ./apps/control_plane:/app
+      - bundle_cache:/usr/local/bundle
+    ports:
+      - "3001:3001"
+    environment:
+      - RAILS_ENV=development
+      - DATABASE_URL=postgresql://aurid_control:password@postgres:5432/aurid_control_plane_development
+      - REDIS_URL=redis://redis:6379/1
+      - KEYCLOAK_URL=http://keycloak:8080
+      - FREEIPA_SERVER=ipa.aurid.io
+      - JWT_SECRET_KEY=development_secret_key_1234567890
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - aurid_network
+    restart: unless-stopped
+
+  # API Gateway - Ruby on Rails application
+  api_gateway:
+    build:
+      context: .
+      dockerfile: apps/api_gateway/Dockerfile
+    container_name: aurid_api_gateway
+    command: bash -c "rm -f tmp/pids/server.pid && bundle exec rails s -p 3002 -b '0.0.0.0'"
+    volumes:
+      - ./apps/api_gateway:/app
+      - bundle_cache:/usr/local/bundle
+    ports:
+      - "3002:3002"
+    environment:
+      - RAILS_ENV=development
+      - DATABASE_URL=postgresql://aurid_gateway:password@postgres:5432/aurid_api_gateway_development
+      - REDIS_URL=redis://redis:6379/1
+      - ADMIN_CONSOLE_URL=http://admin_console:3000
+      - CONTROL_PLANE_URL=http://control_plane:3001
+      - KEYCLOAK_URL=http://keycloak:8080
+      - FREEIPA_SERVER=ipa.aurid.io
+      - JWT_SECRET_KEY=development_secret_key_1234567890
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - aurid_network
+    restart: unless-stopped
+
+  # PostgreSQL database
+  postgres:
+    image: postgres:15-alpine
+    container_name: aurid_postgres
+    environment:
+      - POSTGRES_USER=aurid
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_MULTIPLE_DATABASES=aurid_admin_console_development,aurid_control_plane_development,aurid_api_gateway_development
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-postgres.sh:/docker-entrypoint-initdb.d/init-postgres.sh
+    ports:
+      - "5432:5432"
+    networks:
+      - aurid_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aurid"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and background jobs
+  redis:
+    image: redis:7-alpine
+    container_name: aurid_redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - aurid_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Keycloak for identity management
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.0
+    container_name: aurid_keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin123
+      - KC_DB=postgres
+      - KC_DB_URL=jdbc:postgresql://postgres:5432/keycloak
+      - KC_DB_USERNAME=keycloak
+      - KC_DB_PASSWORD=keycloak_password
+      - KC_HOSTNAME=keycloak
+      - KC_PROXY=edge
+      - KC_HTTP_ENABLED=true
+    volumes:
+      - ./config/keycloak/aurid-realm.json:/opt/keycloak/data/import/aurid-realm.json
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    depends_on:
+      - postgres
+    networks:
+      - aurid_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # FreeIPA (for development, we'll use a mock or lightweight alternative)
+  # Note: FreeIPA is heavy for development, so we'll use a lightweight LDAP server
+  freeipa:
+    image: osixia/openldap:1.5.0
+    container_name: aurid_freeipa
+    environment:
+      - LDAP_ADMIN_PASSWORD=admin123
+      - LDAP_BASE_DN=dc=aurid,dc=io
+      - LDAP_DOMAIN=aurid.io
+    volumes:
+      - freeipa_data:/var/lib/ldap
+      - freeipa_config:/etc/ldap/slapd.d
+      - ./config/freeipa:/container/service/slapd/assets/config/bootstrap/ldif/custom
+    ports:
+      - "389:389"
+      - "636:636"
+    networks:
+      - aurid_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ldapsearch", "-H", "ldap://localhost:389", "-x", "-b", "dc=aurid,dc=io"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Sidekiq for background jobs (Admin Console)
+  sidekiq:
+    build:
+      context: .
+      dockerfile: apps/admin_console/Dockerfile
+    container_name: aurid_sidekiq
+    command: bundle exec sidekiq -C config/sidekiq.yml
+    volumes:
+      - ./apps/admin_console:/app
+      - bundle_cache:/usr/local/bundle
+    environment:
+      - RAILS_ENV=development
+      - DATABASE_URL=postgresql://aurid_admin:password@postgres:5432/aurid_admin_console_development
+      - REDIS_URL=redis://redis:6379/1
+      - REDIS_CACHE_URL=redis://redis:6379/1
+      - REDIS_SESSION_URL=redis://redis:6379/2
+    depends_on:
+      - postgres
+      - redis
+      - admin_console
+    networks:
+      - aurid_network
+    restart: unless-stopped
+
+  # Rust Migration Tool (for development)
+  migration_tool:
+    build:
+      context: .
+      dockerfile: rust/migration_tool/Dockerfile
+    container_name: aurid_migration_tool
+    volumes:
+      - ./rust/migration_tool:/app
+      - ./config/migration:/config
+      - ./output:/output
+    environment:
+      - AURID_CONFIG=/config/config.toml
+      - AURID_OUTPUT_DIR=/output
+      - AURID_DRY_RUN=true
+      - RUST_LOG=info
+    networks:
+      - aurid_network
+    profiles:
+      - tools
+
+  # Rust Audit Logger (for development)
+  audit_logger:
+    build:
+      context: .
+      dockerfile: rust/audit_logger/Dockerfile
+    container_name: aurid_audit_logger
+    volumes:
+      - ./rust/audit_logger:/app
+      - ./config/audit:/config
+    environment:
+      - AURID_CONFIG=/config/config.toml
+      - RUST_LOG=info
+    networks:
+      - aurid_network
+    profiles:
+      - tools
+
+  # Nginx reverse proxy (optional)
+  nginx:
+    image: nginx:alpine
+    container_name: aurid_nginx
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./config/nginx/conf.d:/etc/nginx/conf.d
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - admin_console
+      - control_plane
+      - api_gateway
+    networks:
+      - aurid_network
+    profiles:
+      - proxy
+    restart: unless-stopped
+
+  # Mailcatcher for email testing
+  mailcatcher:
+    image: schickling/mailcatcher
+    container_name: aurid_mailcatcher
+    ports:
+      - "1025:1025"  # SMTP
+      - "1080:1080"  # Web UI
+    networks:
+      - aurid_network
+    profiles:
+      - tools
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  freeipa_data:
+  freeipa_config:
+  bundle_cache:
+  node_modules:
+
+networks:
+  aurid_network:
+    driver: bridge
+    name: aurid_network

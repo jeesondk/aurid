@@ -1,0 +1,89 @@
+# Admin Console Rakefile
+require_relative "config/application"
+
+Rails.application.load_tasks
+
+# Custom tasks for Admin Console
+task :default => ["db:migrate"]
+
+namespace :admin do
+  desc "Create admin user"
+  task :create_admin => :environment do
+    require "securerandom"
+    
+    email = ENV["ADMIN_EMAIL"] || "admin@aurid.io"
+    password = ENV["ADMIN_PASSWORD"] || SecureRandom.hex(16)
+    
+    user = User.find_or_initialize_by(email: email)
+    user.assign_attributes(
+      email: email,
+      password: password,
+      password_confirmation: password,
+      admin: true,
+      first_name: "Admin",
+      last_name: "User"
+    )
+    
+    if user.save
+      puts "Admin user created successfully!"
+      puts "Email: #{user.email}"
+      puts "Password: #{password}" unless ENV["ADMIN_PASSWORD"]
+    else
+      puts "Failed to create admin user: #{user.errors.full_messages.join(', ')}"
+      exit 1
+    end
+  end
+
+  desc "Setup default configurations"
+  task :setup => :environment do
+    # Setup default settings
+    puts "Setting up default configurations..."
+    
+    # Create default tenant if it doesn't exist
+    tenant = Tenant.find_or_initialize_by(name: "Default")
+    tenant.assign_attributes(
+      name: "Default",
+      domain: "aurid.io",
+      status: :active
+    )
+    tenant.save!
+    
+    puts "Default tenant created or updated"
+  end
+end
+
+namespace :keycloak do
+  desc "Sync users from Keycloak"
+  task :sync_users => :environment do
+    require_relative "../lib/tasks/keycloak_sync"
+    KeycloakSync.new.call
+  end
+
+  desc "Setup Keycloak realm and clients"
+  task :setup => :environment do
+    require_relative "../lib/tasks/keycloak_setup"
+    KeycloakSetup.new.call
+  end
+end
+
+namespace :freeipa do
+  desc "Sync users from FreeIPA"
+  task :sync_users => :environment do
+    require_relative "../lib/tasks/freeipa_sync"
+    FreeIPASync.new.call
+  end
+
+  desc "Test FreeIPA connection"
+  task :test_connection => :environment do
+    require_relative "../lib/services/freeipa_service"
+    FreeIPAService.new.test_connection
+  end
+end
+
+namespace :migration do
+  desc "Run AD migration tool"
+  task :ad_to_freeipa => :environment do
+    require_relative "../lib/tasks/ad_migration"
+    ADMigration.new.call
+  end
+end

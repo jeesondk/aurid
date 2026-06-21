@@ -1,0 +1,44 @@
+# Shared Rakefile for Aurid project
+# Each Rails app will have its own Rakefile that requires this
+
+require_relative "config/application"
+
+Rails.application.load_tasks
+
+# Custom tasks for Aurid project
+task :aurid do
+  desc "Run all Aurid setup tasks"
+  task :setup do
+    puts "Setting up Aurid project..."
+    # Add project-wide setup tasks here
+  end
+
+  desc "Run tests for all Rails applications"
+  task :test_all do
+    puts "Running tests for all Aurid applications..."
+    Dir.glob("apps/*").each do |app_dir|
+      app_name = File.basename(app_dir)
+      puts "\n=== Testing #{app_name} ==="
+      Dir.chdir(app_dir) do
+        sh("bundle exec rspec")
+      end
+    end
+  end
+
+  desc "Update dependencies for all applications"
+  task :update_deps do
+    puts "Updating dependencies..."
+    sh("bundle update")
+    Dir.glob("apps/*").each do |app_dir|
+      Dir.chdir(app_dir) do
+        sh("bundle update")
+      end
+    end
+  end
+end
+
+desc "Generate API documentation"
+task :docs do
+  puts "Generating API documentation..."
+  # Add documentation generation here
+end

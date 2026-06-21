@@ -1,0 +1,388 @@
+# Default values for aurid-admin-console
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Global configuration
+global:
+  # Environment (development, staging, production)
+  environment: development
+  
+  # Region for deployment
+  region: eu-central-1
+  
+  # Cloud provider (hetzner, scaleway, aws, azure, gcp)
+  cloudProvider: hetzner
+
+# Application configuration
+app:
+  # Application name
+  name: aurid-admin-console
+  
+  # Version
+  version: 0.1.0
+  
+  # Replica count
+  replicaCount: 2
+  
+  # Image configuration
+  image:
+    repository: ghcr.io/jeesondk/aurid-admin-console
+    tag: latest
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+  
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 3000
+    targetPort: 3000
+    nodePort: null
+  
+  # Ingress configuration
+  ingress:
+    enabled: true
+    className: nginx
+    annotations: {}
+    hosts:
+      - host: admin.aurid.io
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+  
+  # Resources
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  
+  # Liveness and readiness probes
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  
+  # Startup probe
+  startupProbe:
+    enabled: true
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30
+
+# Database configuration
+database:
+  # Use external database or built-in
+  external: false
+  
+  # External database configuration
+  externalConfig:
+    host: postgres.aurid.io
+    port: 5432
+    username: aurid_admin
+    password: ""
+    database: aurid_admin_console_production
+    sslMode: require
+  
+  # Built-in PostgreSQL configuration
+  postgresql:
+    enabled: true
+    image: postgres:15-alpine
+    imageTag: 15-alpine
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: ""
+      accessModes:
+        - ReadWriteOnce
+    backup:
+      enabled: true
+      schedule: "0 2 * * *"
+      retention: 7
+
+# Redis configuration
+redis:
+  # Use external Redis or built-in
+  external: false
+  
+  # External Redis configuration
+  externalConfig:
+    host: redis.aurid.io
+    port: 6379
+    password: ""
+    db: 0
+  
+  # Built-in Redis configuration
+  builtin:
+    enabled: true
+    image: redis:7-alpine
+    imageTag: 7-alpine
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+    persistence:
+      enabled: true
+      size: 1Gi
+
+# Keycloak configuration
+keycloak:
+  # Use external Keycloak or built-in
+  external: true
+  
+  # External Keycloak configuration
+  externalConfig:
+    url: https://keycloak.aurid.io
+    realm: aurid
+    clientId: admin-console
+    clientSecret: ""
+  
+  # Built-in Keycloak configuration
+  builtin:
+    enabled: false
+    image: quay.io/keycloak/keycloak:24.0.0
+    imageTag: 24.0.0
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+    persistence:
+      enabled: true
+      size: 5Gi
+
+# FreeIPA configuration
+freeipa:
+  # Use external FreeIPA or built-in
+  external: true
+  
+  # External FreeIPA configuration
+  externalConfig:
+    host: ipa.aurid.io
+    port: 443
+    useHttps: true
+    username: admin
+    password: ""
+    baseDn: dc=aurid,dc=io
+    realm: AURID.IO
+    domain: aurid.io
+
+# Application configuration
+config:
+  # Rails environment
+  railsEnv: production
+  
+  # Database URL
+  databaseUrl: ""
+  
+  # Redis URL
+  redisUrl: "redis://localhost:6379/1"
+  redisCacheUrl: "redis://localhost:6379/1"
+  redisSessionUrl: "redis://localhost:6379/2"
+  
+  # JWT configuration
+  jwt:
+    secretKey: ""
+    signingAlgorithm: HS256
+    expirationTime: 3600
+    refreshExpirationTime: 604800
+    issuer: aurid-admin-console
+    audience: aurid-api
+  
+  # Devise configuration
+  devise:
+    secretKey: ""
+    pepper: ""
+    mailerSender: noreply@aurid.io
+  
+  # Session configuration
+  session:
+    store: :redis_session_store
+    key: _aurid_admin_console_session
+    domain: aurid.io
+    secure: true
+    httponly: true
+    sameSite: lax
+  
+  # Cookie configuration
+  cookie:
+    domain: aurid.io
+    secure: true
+    httponly: true
+    sameSite: lax
+  
+  # Security configuration
+  security:
+    forceSsl: true
+    hsts: true
+    hstsMaxAge: 631138519
+    hstsIncludeSubdomains: true
+    hstsPreload: true
+    contentSecurityPolicy: "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
+    frameOptions: DENY
+    contentTypeOptions: nosniff
+    xssProtection: "1; mode=block"
+    referrerPolicy: strict-origin-when-cross-origin
+  
+  # Logging configuration
+  logging:
+    level: info
+    format: json
+    console: true
+    file: /var/log/aurid/admin-console.log
+  
+  # Monitoring configuration
+  monitoring:
+    enabled: true
+    prometheus:
+      enabled: true
+      port: 9394
+    sentry:
+      enabled: false
+      dsn: ""
+      environment: production
+      tracesSampleRate: 0.1
+      profilesSampleRate: 0.01
+    datadog:
+      enabled: false
+      apiKey: ""
+      appKey: ""
+  
+  # Feature flags
+  featureFlags:
+    auditLogging: true
+    adMigration: true
+    multiTenant: true
+    sidekiqWeb: false
+    flipperUi: false
+
+# Sidekiq configuration
+sidekiq:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/jeesondk/aurid-admin-console
+    tag: latest
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  concurrency: 5
+  queues: []
+  timeout: 30
+  retries: 3
+
+# Horizontal Pod Autoscaler configuration
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# Pod Disruption Budget configuration
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+# Network policies
+networkPolicy:
+  enabled: false
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: aurid-api-gateway
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: aurid-control-plane
+      ports:
+        - protocol: TCP
+          port: 3000
+
+# Service account configuration
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# RBAC configuration
+rbac:
+  create: false
+  rules: []
+
+# Priority class configuration
+priorityClassName: ""
+
+# Node selector configuration
+nodeSelector: {}
+
+# Tolerations configuration
+tolerations: []
+
+# Affinity configuration
+affinity: {}
+
+# Topology spread constraints
+topologySpreadConstraints: []
+
+# Volume configuration
+volumes:
+  - name: tmp
+    emptyDir: {}
+  - name: uploads
+    emptyDir:
+      sizeLimit: 1Gi
+
+# Volume mounts configuration
+volumeMounts:
+  - name: tmp
+    mountPath: /tmp
+  - name: uploads
+    mountPath: /app/public/uploads
+
+# Environment variables
+env: []
+
+# Secrets
+secrets: []
+
+# ConfigMaps
+configMaps: []

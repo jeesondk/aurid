@@ -1,0 +1,44 @@
+apiVersion: v2
+name: aurid-admin-console
+version: 0.1.0
+description: Aurid Admin Console - EU-Sovereign IAM Management Platform
+appVersion: 0.1.0
+
+# Type of chart (application or library)
+type: application
+
+# Dependencies
+# Dependencies are defined in requirements.yaml or Chart.yaml
+# For this chart, we'll keep it simple and manage dependencies separately
+dependencies: []
+
+# Chart metadata
+home: https://aurid.io
+sources:
+  - https://github.com/jeesondk/aurid
+maintainers:
+  - name: Aurid ApS
+    email: team@aurid.io
+    url: https://aurid.io
+
+# Keywords for categorization
+keywords:
+  - iam
+  - identity
+  - access-management
+  - eu-sovereign
+  - keycloak
+  - freeipa
+  - rails
+
+# Engine for template rendering (default is gotpl)
+engine: gotpl
+
+# Icon for the chart (optional)
+# icon: https://aurid.io/logo.png
+
+# Annotations for the chart (optional)
+annotations:
+  "aurid.io/version": "0.1.0"
+  "aurid.io/phase": "1"
+  "aurid.io/component": "admin-console"
